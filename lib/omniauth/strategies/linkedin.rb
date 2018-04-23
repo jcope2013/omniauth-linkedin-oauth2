@@ -3,6 +3,23 @@ require 'omniauth-oauth2'
 module OmniAuth
   module Strategies
     class LinkedIn < OmniAuth::Strategies::OAuth2
+      V1_TO_V2_FIELD_MAP = {
+        'id' => 'id',
+        'email-address' => nil,
+        'first-name' => 'localizedFirstName',
+        'last-name' => 'localizedLastName',
+        'headline' => 'headline',
+        'location' => nil,
+        'industry' => 'industryName',
+        'picture-url' => 'profilePicture(displayImage~:playableStreams)',
+        'public-profile-url' => 'vanityName'
+      }
+
+      PROFILE_ENDPOINT = {
+        'v1' => '/v1/people/~',
+        'v2' => '/v2/me'
+      }
+
       # Give your strategy a name.
       option :name, 'linkedin'
 
@@ -27,35 +44,33 @@ module OmniAuth
 
       info do
         if options.api_version == "v1"
-        {
-          :name => user_name,
-          :email => raw_info['emailAddress'],
-          :nickname => user_name,
-          :first_name => raw_info['firstName'],
-          :last_name => raw_info['lastName'],
-          :location => raw_info['location'],
-          :description => raw_info['headline'],
-          :image => raw_info['pictureUrl'],
-          :urls => {
-            'public_profile' => raw_info['publicProfileUrl']
+          {
+            :name => user_name,
+            :email => raw_info['emailAddress'],
+            :nickname => user_name,
+            :first_name => raw_info['firstName'],
+            :last_name => raw_info['lastName'],
+            :location => raw_info['location'],
+            :description => raw_info['headline'],
+            :image => raw_info['pictureUrl'],
+            :urls => {
+              'public_profile' => raw_info['publicProfileUrl']
+            }
           }
-        }
         elsif options.api_version == "v2"
-        {
-          :name => user_name,
-          :email => '',
-          :nickname => user_name,
-          :first_name => raw_info['localizedFirstName'],
-          :last_name => raw_info['localizedLastName'],
-          :location => "", # LIv2 TODO
-          :description => "",
-          :image => "",  # LIv2 TODO - this is going to be nasty to fetch.
-          :urls => {
-            'public_profile' => "" # LIv2 TODO
+          {
+            :name => user_name,
+            :email => nil,
+            :nickname => user_name,
+            :first_name => raw_info['localizedFirstName'],
+            :last_name => raw_info['localizedLastName'],
+            :location => nil,
+            :description => localized_field(raw_info['headline']),
+            :image => profile_picture,
+            :urls => {
+              'public_profile' => "https://www.linkedin.com/in/#{raw_info['vanityName']}"
+            }
           }
-        }
-        else
-          {}
         end
       end
 
@@ -79,34 +94,58 @@ module OmniAuth
       end
 
       def raw_info
-        if options.api_version == "v1"
-          @raw_info ||= access_token.get("/v1/people/~:(#{option_fields.join(',')})?format=json").parsed
-        elsif options.api_version == "v2"
-          # LIv2 TODO should use a projection to limit what we're pulling back but we'll need two
-          # different option_fields?
-          # @raw_info ||= access_token.get("/v2/me?projection=(#{option_fields.join(',')})").parsed
-          @raw_info ||= access_token.get("/v2/me").parsed
-        else
-          raise ArgumentError.new("Unexpected value for api_version option: #{options.api_version}")
-        end
+        @raw_info ||= access_token.get(profile_endpoint).parsed
       end
 
       private
 
       def option_fields
         fields = options.fields
-        fields.map! { |f| f == "picture-url" ? "picture-url;secure=true" : f } if !!options[:secure_image_url]
-        fields
+        fields.map! do |f|
+          if options.api_version == 'v2'
+            V1_TO_V2_FIELD_MAP.fetch(f,f)
+          elsif !!options[:secure_image_url] && f == 'picture-url'
+            "picture-url;secure=true"
+          else
+            f
+          end
+        end
+        fields.compact
+      end
+
+      def localized_field(field)
+        return nil unless field
+        locale = "#{field['preferredLocale']['language']}_#{field['preferredLocale']['country']}"
+        field['localized'][locale]
+      end
+
+      def profile_picture
+        return nil if raw_info['profilePicture'].to_s.empty?
+        raw_info['profilePicture']['displayImage~']['elements'].first['identifiers'].first['identifier']
+      end
+
+      def first_name
+        raw_info['firstName'] || raw_info['localizedFirstName']
+      end
+
+      def last_name
+        raw_info['lastName'] || raw_info['localizedLastName']
       end
 
       def user_name
-        # LIv2 Gross.
-        name = case options.api_version
-               when "v1" then "#{raw_info['firstName']} #{raw_info['lastName']}".strip
-               when "v2" then "#{raw_info['localizedFirstName']} #{raw_info['localizedLastName']}".strip
-               else ""
-               end
+        name = "#{first_name} #{last_name}"
         name.empty? ? nil : name
+      end
+
+      def profile_endpoint
+        suffix = case options.api_version
+                 when 'v1'
+                   ":(#{option_fields.join(',')})?format=json"
+                 when 'v2'
+                   "?projection=(#{option_fields.join(',')})"
+                 end
+
+        PROFILE_ENDPOINT[options.api_version] + suffix
       end
     end
   end
