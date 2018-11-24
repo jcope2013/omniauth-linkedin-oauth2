@@ -60,7 +60,7 @@ module OmniAuth
         elsif options.api_version == "v2"
           {
             :name => user_name,
-            :email => nil,
+            :email => member_email,
             :nickname => user_name,
             :first_name => raw_info['localizedFirstName'],
             :last_name => raw_info['localizedLastName'],
@@ -95,6 +95,15 @@ module OmniAuth
 
       def raw_info
         @raw_info ||= access_token.get(profile_endpoint).parsed
+      end
+
+      def member_email
+        return @member_email if @member_email
+        contacts = access_token.get(contact_endpoint).parsed['elements']
+
+        emails = contacts.select { |i| i['type'] == 'EMAIL' }
+        available = emails.find { |i| i['primary'] } || emails.first
+        @member_email = available.presence && available['handle~']['emailAddress']
       end
 
       private
@@ -135,6 +144,10 @@ module OmniAuth
       def user_name
         name = "#{first_name} #{last_name}"
         name.empty? ? nil : name
+      end
+
+      def contact_endpoint
+        '/v2/clientAwareMemberHandles?q=members&projection=(elements*(primary,type,handle~))'
       end
 
       def profile_endpoint
