@@ -5,14 +5,9 @@ module OmniAuth
     class LinkedIn < OmniAuth::Strategies::OAuth2
       V1_TO_V2_FIELD_MAP = {
         'id' => 'id',
-        'email-address' => nil,
-        'first-name' => 'localizedFirstName',
-        'last-name' => 'localizedLastName',
-        'headline' => 'headline',
-        'location' => nil,
-        'industry' => 'industryName',
-        'picture-url' => 'profilePicture(displayImage~:playableStreams)',
-        'public-profile-url' => 'vanityName'
+        'first-name' => 'firstName',
+        'last-name' => 'lastName',
+        'picture-url' => 'profilePicture(displayImage~:playableStreams)'
       }
 
       PROFILE_ENDPOINT = {
@@ -31,7 +26,7 @@ module OmniAuth
         :token_url => 'https://www.linkedin.com/oauth/v2/accessToken'
       }
 
-      option :scope, 'r_basicprofile r_emailaddress'
+      option :scope, 'r_liteprofile r_emailaddress'
       option :fields, ['id', 'email-address', 'first-name', 'last-name', 'headline', 'location', 'industry', 'picture-url', 'public-profile-url']
       option :api_version, 'v1'
 
@@ -62,8 +57,8 @@ module OmniAuth
             :name => user_name,
             :email => member_email,
             :nickname => user_name,
-            :first_name => raw_info['localizedFirstName'],
-            :last_name => raw_info['localizedLastName'],
+            :first_name => first_name,
+            :last_name => last_name,
             :location => nil,
             :description => localized_field(raw_info['headline']),
             :image => profile_picture,
@@ -89,7 +84,8 @@ module OmniAuth
           :mode => :query,
           :param_name => 'oauth2_access_token',
           :expires_in => oauth2_access_token.expires_in,
-          :expires_at => oauth2_access_token.expires_at
+          :expires_at => oauth2_access_token.expires_at,
+          "X-Restli-Protocol-Version".freeze => "2.0.0"
         })
       end
 
@@ -134,11 +130,11 @@ module OmniAuth
       end
 
       def first_name
-        raw_info['firstName'] || raw_info['localizedFirstName']
+        localized_field(raw_info['firstName'])
       end
 
       def last_name
-        raw_info['lastName'] || raw_info['localizedLastName']
+        localized_field(raw_info['lastName'])
       end
 
       def user_name
@@ -147,7 +143,7 @@ module OmniAuth
       end
 
       def contact_endpoint
-        '/v2/clientAwareMemberHandles?q=members&projection=(elements*(primary,type,handle~))'
+        '/v2/emailAddress?q=members&projection=(elements*(handle~))'
       end
 
       def profile_endpoint
